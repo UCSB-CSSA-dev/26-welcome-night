@@ -1,0 +1,5 @@
+# Example Render Static Site settings (configure in dashboard)
+# Root Directory: client
+# Build Command: npm install && npm run build
+# Publish Directory: dist
+# Env: VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY
