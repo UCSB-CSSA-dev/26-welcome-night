@@ -174,7 +174,10 @@ export function LotteryWheel({
                   className="pointer-events-none absolute inset-0"
                   style={{ transform: `rotate(${rot}deg)` }}
                 >
-                  <div className="absolute left-1/2 top-[8%] flex w-[40%] -translate-x-1/2 flex-col items-center gap-1.5 text-center">
+                  <div className="absolute left-1/2 top-[7%] flex w-[42%] -translate-x-1/2 flex-col items-center gap-1.5 text-center">
+                    <span className="font-sans line-clamp-2 text-sm font-bold leading-snug text-white drop-shadow-[0_1px_3px_rgba(0,0,0,0.85)] sm:text-base">
+                      {seg.label}
+                    </span>
                     {seg.image ? (
                       <img
                         src={seg.image}
@@ -182,13 +185,10 @@ export function LotteryWheel({
                         className="h-12 w-12 rounded-md object-cover shadow-md ring-2 ring-white/50 sm:h-14 sm:w-14"
                       />
                     ) : seg.isThankYou ? (
-                      <span className="flex h-12 w-12 items-center justify-center rounded-md bg-white/15 text-lg text-white/90 sm:h-14 sm:w-14">
+                      <span className="flex h-10 w-10 items-center justify-center rounded-md bg-white/15 font-sans text-lg text-white/90 sm:h-12 sm:w-12">
                         ✦
                       </span>
                     ) : null}
-                    <span className="line-clamp-2 text-sm font-bold leading-snug text-white drop-shadow-[0_1px_3px_rgba(0,0,0,0.85)] sm:text-base">
-                      {seg.label}
-                    </span>
                   </div>
                 </div>
               );
@@ -198,7 +198,7 @@ export function LotteryWheel({
           {/* Fixed hub — does not rotate with the disc */}
           <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center">
             <div className="flex h-[17%] w-[17%] min-h-16 min-w-16 items-center justify-center rounded-full border-[3px] border-gold bg-gradient-to-b from-navy to-navy-deep shadow-[inset_0_2px_8px_rgba(0,0,0,0.45),0_4px_16px_rgba(0,0,0,0.35)]">
-              <span className="text-xs font-bold tracking-wider text-gold-soft sm:text-sm">
+              <span className="font-sans text-xs font-bold tracking-wider text-gold-soft sm:text-sm">
                 CSSA
               </span>
             </div>

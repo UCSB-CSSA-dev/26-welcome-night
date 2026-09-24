@@ -39,6 +39,10 @@ export function HomePage() {
   const [pendingResult, setPendingResult] = useState<DrawResult | null>(null);
   const [syncStatus, setSyncStatus] = useState<SyncStatus>("offline");
   const [approvedDevices, setApprovedDevices] = useState(0);
+  /** Snapshot of prize history while this device is spinning (hide spoilers). */
+  const [frozenPrizeHistory, setFrozenPrizeHistory] = useState<
+    LotteryState["history"] | null
+  >(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -81,6 +85,11 @@ export function HomePage() {
       (state?.history ?? []).filter((h) => h.prizeId != null && h.prizeName),
     [state?.history],
   );
+
+  const shownPrizeHistory =
+    spinning && frozenPrizeHistory !== null
+      ? frozenPrizeHistory.filter((h) => h.prizeId != null && h.prizeName)
+      : prizeHistory;
 
   const syncLabel =
     syncStatus === "offline"
@@ -142,6 +151,8 @@ export function HomePage() {
         result.prize,
         result.thankYou,
       );
+      // Freeze history before refresh so the new result is not spoiled mid-spin
+      setFrozenPrizeHistory(state?.history ?? []);
       setPendingResult(result);
       setTargetIndex(idx);
       setSpinning(true);
@@ -155,6 +166,7 @@ export function HomePage() {
   function handleSpinEnd() {
     setSpinning(false);
     setBusy(false);
+    setFrozenPrizeHistory(null);
     if (pendingResult) {
       setResultModal(pendingResult);
       setPendingResult(null);
@@ -299,13 +311,13 @@ export function HomePage() {
             </div>
           ) : null}
 
-          {prizeHistory.length > 0 ? (
+          {shownPrizeHistory.length > 0 ? (
             <Card className="border-white/10 bg-white/10 p-3 text-white backdrop-blur-md">
               <h2 className="mb-1.5 text-xs font-semibold text-gold-soft">
                 最近中奖
               </h2>
               <ul className="max-h-28 space-y-0.5 overflow-y-auto text-sm lg:max-h-[min(28vh,180px)]">
-                {prizeHistory.slice(0, 12).map((h) => (
+                {shownPrizeHistory.slice(0, 12).map((h) => (
                   <li
                     key={h.orderNumber}
                     className="flex justify-between gap-2 border-b border-white/10 py-1 last:border-0"
