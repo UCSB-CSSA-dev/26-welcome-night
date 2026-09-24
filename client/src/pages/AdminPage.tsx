@@ -309,11 +309,11 @@ export function AdminPage() {
         <h2 className="mb-2 text-lg font-semibold text-navy">号码序列锁定 / 导出</h2>
         <p className="mb-3 text-sm text-ink/60">
           导出格式为一串号码（按奖品排序：一等奖号码 → 二等奖号码 → …
-          → 其余谢谢参与号码），例如{" "}
+          → 其余号码随机打乱），例如{" "}
           <code className="rounded bg-navy/5 px-1 font-mono text-xs">
             12, 13, 42, 45, 18, …
           </code>
-          。锁定后该列表写入数据库并固定；之后调整奖品顺序或新增奖品都不会改动已锁定列表。哈希即对该字符串求
+          。尾部随机号码便于以后加奖时仍从乱序池中取用。锁定后整表写入数据库并固定；之后调整奖品顺序或新增奖品都不会改动已锁定列表。哈希即对该字符串求
           SHA-256。
         </p>
         {state?.config.sequenceNumbers ? (

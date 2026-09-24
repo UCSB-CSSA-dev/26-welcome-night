@@ -6,20 +6,24 @@ ALTER TABLE lottery_config
 
 -- Build ordered number list:
 --   prize numbers by sort_order, then assigned_number;
---   then remaining (thank-you) numbers ascending.
+--   then remaining (thank-you) numbers in random order (so later
+--   prize slots can consume a shuffled tail).
 CREATE OR REPLACE FUNCTION build_number_sequence()
 RETURNS INT[]
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = public
-STABLE
 AS $$
 DECLARE
   v_cfg lottery_config%ROWTYPE;
   v_out INT[] := ARRAY[]::INT[];
   v_used INT[] := ARRAY[]::INT[];
+  v_rest INT[] := ARRAY[]::INT[];
   v_prize RECORD;
   v_num INT;
+  v_i INT;
+  v_j INT;
+  v_tmp INT;
 BEGIN
   SELECT * INTO v_cfg FROM lottery_config WHERE id = 1;
 
@@ -41,11 +45,21 @@ BEGIN
 
   FOR v_num IN 1..v_cfg.total_number LOOP
     IF NOT (v_num = ANY (COALESCE(v_used, ARRAY[]::INT[]))) THEN
-      v_out := array_append(v_out, v_num);
+      v_rest := array_append(v_rest, v_num);
     END IF;
   END LOOP;
 
-  RETURN v_out;
+  -- Fisher–Yates shuffle of the thank-you / unused tail
+  IF coalesce(array_length(v_rest, 1), 0) > 1 THEN
+    FOR v_i IN REVERSE array_length(v_rest, 1)..2 LOOP
+      v_j := 1 + floor(random() * v_i)::INT;
+      v_tmp := v_rest[v_i];
+      v_rest[v_i] := v_rest[v_j];
+      v_rest[v_j] := v_tmp;
+    END LOOP;
+  END IF;
+
+  RETURN v_out || COALESCE(v_rest, ARRAY[]::INT[]);
 END;
 $$;
 
@@ -58,6 +72,40 @@ AS $$
     WHEN p_nums IS NULL OR coalesce(array_length(p_nums, 1), 0) = 0 THEN ''
     ELSE array_to_string(p_nums, ', ')
   END;
+$$;
+
+-- Persist a freshly built list when missing (stable until regenerate / unlock).
+CREATE OR REPLACE FUNCTION ensure_sequence_numbers()
+RETURNS TEXT
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_cfg lottery_config%ROWTYPE;
+  v_nums INT[];
+  v_text TEXT;
+BEGIN
+  SELECT * INTO v_cfg FROM lottery_config WHERE id = 1 FOR UPDATE;
+
+  IF coalesce(v_cfg.sequence_numbers, '') <> '' THEN
+    RETURN v_cfg.sequence_numbers;
+  END IF;
+
+  IF v_cfg.status = 'setup' THEN
+    RAISE EXCEPTION '请先生成奖池后再导出序列';
+  END IF;
+
+  v_nums := build_number_sequence();
+  v_text := numbers_to_text(v_nums);
+
+  UPDATE lottery_config
+  SET sequence_numbers = v_text,
+      updated_at = NOW()
+  WHERE id = 1;
+
+  RETURN v_text;
+END;
 $$;
 
 CREATE OR REPLACE FUNCTION get_lottery_sequence(p_token UUID)
@@ -78,17 +126,18 @@ BEGIN
     RAISE EXCEPTION '请先生成奖池后再导出序列';
   END IF;
 
-  -- Locked: always return the frozen list
   IF v_cfg.sequence_locked AND coalesce(v_cfg.sequence_numbers, '') <> '' THEN
     v_text := v_cfg.sequence_numbers;
-    SELECT array_agg(trim(x)::INT ORDER BY ord)
-    INTO v_nums
-    FROM unnest(string_to_array(v_text, ',')) WITH ORDINALITY AS t(x, ord)
-    WHERE trim(x) <> '';
   ELSE
-    v_nums := build_number_sequence();
-    v_text := numbers_to_text(v_nums);
+    v_text := ensure_sequence_numbers();
   END IF;
+
+  SELECT array_agg(trim(x)::INT ORDER BY ord)
+  INTO v_nums
+  FROM unnest(string_to_array(v_text, ',')) WITH ORDINALITY AS t(x, ord)
+  WHERE trim(x) <> '';
+
+  SELECT * INTO v_cfg FROM lottery_config WHERE id = 1;
 
   RETURN jsonb_build_object(
     'totalNumber', v_cfg.total_number,
@@ -129,8 +178,14 @@ BEGIN
     RAISE EXCEPTION '序列已经锁定';
   END IF;
 
-  v_nums := build_number_sequence();
-  v_text := numbers_to_text(v_nums);
+  -- Reuse stored draft (already shuffled) so hash matches export
+  v_text := ensure_sequence_numbers();
+  SELECT array_agg(trim(x)::INT ORDER BY ord)
+  INTO v_nums
+  FROM unnest(string_to_array(v_text, ',')) WITH ORDINALITY AS t(x, ord)
+  WHERE trim(x) <> '';
+
+  SELECT * INTO v_cfg FROM lottery_config WHERE id = 1;
 
   IF coalesce(array_length(v_nums, 1), 0) <> v_cfg.total_number THEN
     RAISE EXCEPTION '序列长度异常';
@@ -268,7 +323,7 @@ BEGIN
       status = 'running',
       sequence_locked = FALSE,
       sequence_hash = NULL,
-      sequence_numbers = NULL,
+      sequence_numbers = v_text,
       sequence_locked_at = NULL,
       updated_at = NOW()
   WHERE id = 1
@@ -316,6 +371,14 @@ BEGIN
     END IF;
     UPDATE prizes SET sort_order = v_i - 1 WHERE id = v_id;
   END LOOP;
+
+  -- Unlocked: rebuild next export (new prize prefix + reshuffled tail).
+  -- Locked: keep frozen sequence_numbers unchanged.
+  UPDATE lottery_config
+  SET sequence_numbers = NULL,
+      sequence_hash = NULL,
+      updated_at = NOW()
+  WHERE id = 1 AND sequence_locked = FALSE;
 
   RETURN jsonb_build_object('ok', true);
 END;
@@ -375,12 +438,17 @@ BEGIN
   WHERE id = 1
   RETURNING * INTO v_cfg;
 
+  -- Build prize prefix + shuffled thank-you tail and persist as draft
+  PERFORM ensure_sequence_numbers();
+  SELECT * INTO v_cfg FROM lottery_config WHERE id = 1;
+
   RETURN jsonb_build_object(
     'totalNumber', v_cfg.total_number,
     'currentCursor', v_cfg.current_cursor,
     'status', v_cfg.status,
     'updatedAt', v_cfg.updated_at,
-    'sequenceLocked', false
+    'sequenceLocked', false,
+    'sequenceNumbers', v_cfg.sequence_numbers
   );
 END;
 $$;
@@ -434,12 +502,16 @@ BEGIN
   WHERE id = 1
   RETURNING * INTO v_cfg;
 
+  PERFORM ensure_sequence_numbers();
+  SELECT * INTO v_cfg FROM lottery_config WHERE id = 1;
+
   RETURN jsonb_build_object(
     'totalNumber', v_cfg.total_number,
     'currentCursor', v_cfg.current_cursor,
     'status', v_cfg.status,
     'updatedAt', v_cfg.updated_at,
-    'sequenceLocked', false
+    'sequenceLocked', false,
+    'sequenceNumbers', v_cfg.sequence_numbers
   );
 END;
 $$;
@@ -509,6 +581,7 @@ $$;
 
 GRANT EXECUTE ON FUNCTION build_number_sequence() TO anon, authenticated;
 GRANT EXECUTE ON FUNCTION numbers_to_text(INT[]) TO anon, authenticated;
+GRANT EXECUTE ON FUNCTION ensure_sequence_numbers() TO anon, authenticated;
 GRANT EXECUTE ON FUNCTION get_lottery_sequence(UUID) TO anon, authenticated;
 GRANT EXECUTE ON FUNCTION lock_lottery_sequence(UUID, TEXT) TO anon, authenticated;
 GRANT EXECUTE ON FUNCTION unlock_lottery_sequence(UUID) TO anon, authenticated;
