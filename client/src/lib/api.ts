@@ -89,7 +89,15 @@ export async function setTotalNumber(
   });
 }
 
-export async function getLotterySequence(token: string): Promise<unknown> {
+export async function getLotterySequence(token: string): Promise<{
+  totalNumber: number;
+  numbers: number[];
+  numbersText: string;
+  sequenceLocked?: boolean;
+  sequenceHash?: string | null;
+  sequenceLockedAt?: string | null;
+  sequenceNumbers?: string | null;
+}> {
   return rpc("get_lottery_sequence", { p_token: token });
 }
 
@@ -101,6 +109,7 @@ export async function lockLotterySequence(
   sequenceLocked: boolean;
   sequenceHash: string;
   sequenceLockedAt: string;
+  sequenceNumbers?: string;
 }> {
   return rpc("lock_lottery_sequence", {
     p_token: token,
@@ -114,11 +123,21 @@ export async function unlockLotterySequence(token: string): Promise<void> {
 
 export async function importLotterySequence(
   token: string,
-  document: unknown,
+  document: { totalNumber: number; numbers: number[]; numbersText: string },
 ): Promise<LotteryConfig> {
   return rpc<LotteryConfig>("import_lottery_sequence", {
     p_token: token,
     p_document: document,
+  });
+}
+
+export async function reorderPrizes(
+  token: string,
+  ids: number[],
+): Promise<void> {
+  await rpc("admin_reorder_prizes", {
+    p_token: token,
+    p_ids: ids,
   });
 }
 

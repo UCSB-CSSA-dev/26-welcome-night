@@ -8,6 +8,7 @@ export interface LotteryConfig {
   sequenceLocked?: boolean;
   sequenceHash?: string | null;
   sequenceLockedAt?: string | null;
+  sequenceNumbers?: string | null;
 }
 
 export interface Prize {

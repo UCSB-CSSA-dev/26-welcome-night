@@ -15,6 +15,7 @@ import {
   listSessions,
   lockLotterySequence,
   publicImageUrl,
+  reorderPrizes,
   restartLottery,
   setSessionApproved,
   setTotalNumber,
@@ -305,12 +306,21 @@ export function AdminPage() {
       </Card>
 
       <Card>
-        <h2 className="mb-2 text-lg font-semibold text-navy">奖池序列锁定 / 导出</h2>
+        <h2 className="mb-2 text-lg font-semibold text-navy">号码序列锁定 / 导出</h2>
         <p className="mb-3 text-sm text-ink/60">
-          哈希只针对固定奖池映射（event + totalNumber +
-          sequence，不含 drawn
-          等可变字段）。请用「导出校验用 canonical JSON」得到的文件内容去在线工具验算；也可从该文件重新导入奖池。
+          导出格式为一串号码（按奖品排序：一等奖号码 → 二等奖号码 → …
+          → 其余谢谢参与号码），例如{" "}
+          <code className="rounded bg-navy/5 px-1 font-mono text-xs">
+            12, 13, 42, 45, 18, …
+          </code>
+          。锁定后该列表写入数据库并固定；之后调整奖品顺序或新增奖品都不会改动已锁定列表。哈希即对该字符串求
+          SHA-256。
         </p>
+        {state?.config.sequenceNumbers ? (
+          <p className="mb-3 max-h-24 overflow-y-auto break-all rounded-md bg-navy/5 px-3 py-2 font-mono text-xs text-navy">
+            已存序列：{state.config.sequenceNumbers}
+          </p>
+        ) : null}
         {state?.config.sequenceHash ? (
           <p className="mb-3 break-all rounded-md bg-navy/5 px-3 py-2 font-mono text-xs text-navy">
             已存哈希：{state.config.sequenceHash}
@@ -324,7 +334,7 @@ export function AdminPage() {
         <input
           ref={importFileRef}
           type="file"
-          accept="application/json,.json"
+          accept="application/json,.json,.txt,text/plain"
           className="hidden"
           onChange={(e) => {
             const file = e.target.files?.[0];
@@ -332,25 +342,27 @@ export function AdminPage() {
             if (!file || !token) return;
             if (
               !window.confirm(
-                "导入将覆盖当前奖池映射、清空已抽记录并重置进度。确定继续？",
+                "导入将按当前奖品顺序覆盖号码映射、清空已抽记录并重置进度。确定继续？",
               )
             ) {
               return;
             }
             void run(async () => {
               const text = await file.text();
-              let parsed: unknown;
-              try {
-                parsed = JSON.parse(text) as unknown;
-              } catch {
-                throw new Error("无法解析 JSON 文件");
+              let parsed: unknown = text.trim();
+              if (text.trim().startsWith("{") || text.trim().startsWith("[")) {
+                try {
+                  parsed = JSON.parse(text) as unknown;
+                } catch {
+                  parsed = text.trim();
+                }
               }
               const document = parseImportDocument(parsed);
               const { hash } = await hashSequencePayload(document);
               await importLotterySequence(token, document);
               setLastExportHash(hash);
               setTotalDirty(false);
-            }, "序列已从 JSON 导入（进度已重置）");
+            }, "号码序列已导入（进度已重置）");
           }}
         />
         <div className="flex flex-wrap gap-2">
@@ -360,17 +372,18 @@ export function AdminPage() {
             onClick={() =>
               void run(async () => {
                 const payload = await getLotterySequence(token);
-                const { canonicalJson, hash } =
+                const { numbersText, hash } =
                   await hashSequencePayload(payload);
                 setLastExportHash(hash);
                 downloadTextFile(
-                  `welcome-night-sequence-canonical.json`,
-                  canonicalJson,
+                  `welcome-night-numbers.txt`,
+                  numbersText,
+                  "text/plain;charset=utf-8",
                 );
-              }, "校验用 canonical JSON 已下载（请对此文件求 SHA-256）")
+              }, "号码列表已下载（请对此文件内容求 SHA-256）")
             }
           >
-            导出校验用 canonical JSON
+            导出号码列表
           </Button>
           <Button
             variant="outline"
@@ -380,7 +393,7 @@ export function AdminPage() {
             }
             onClick={() => importFileRef.current?.click()}
           >
-            从 canonical JSON 导入
+            导入号码列表
           </Button>
           <Button
             variant="outline"
@@ -391,7 +404,7 @@ export function AdminPage() {
                 const { hash } = await hashSequencePayload(payload);
                 setLastExportHash(hash);
                 downloadTextFile(
-                  `welcome-night-sequence.sha256.txt`,
+                  `welcome-night-numbers.sha256.txt`,
                   `${hash}\n`,
                   "text/plain;charset=utf-8",
                 );
@@ -418,7 +431,7 @@ export function AdminPage() {
                 const { hash } = await hashSequencePayload(payload);
                 await lockLotterySequence(token, hash);
                 setLastExportHash(hash);
-              }, "序列已锁定")
+              }, "号码序列已锁定")
             }
           >
             锁定序列
@@ -438,7 +451,7 @@ export function AdminPage() {
           </Button>
         </div>
         <p className="mt-3 text-xs text-ink/45">
-          验证步骤：下载「校验用 canonical JSON」→ 打开{" "}
+          验证步骤：下载「号码列表」→ 打开{" "}
           <a
             href="https://emn178.github.io/online-tools/sha256.html"
             target="_blank"
@@ -447,13 +460,18 @@ export function AdminPage() {
           >
             在线 SHA-256 工具 ↗
           </a>
-          → 粘贴该文件的全部内容（单行、无多余空格）→ 结果应与页面哈希一致。
+          → 粘贴文件全部内容（含逗号与空格，勿改格式）→ 结果应与页面哈希一致。
         </p>
       </Card>
 
       <Card>
         <div className="mb-3 flex items-center justify-between gap-3">
-          <h2 className="text-lg font-semibold text-navy">奖品管理</h2>
+          <div>
+            <h2 className="text-lg font-semibold text-navy">奖品管理</h2>
+            <p className="text-xs text-ink/50">
+              列表顺序 = 奖等顺序（最上为一等奖）。可用上/下调整。
+            </p>
+          </div>
           <Button
             variant="gold"
             size="sm"
@@ -468,11 +486,53 @@ export function AdminPage() {
           <p className="text-sm text-ink/50">暂无奖品，点击右上角添加</p>
         ) : (
           <ul className="space-y-3">
-            {(state?.prizes ?? []).map((p) => (
+            {(state?.prizes ?? []).map((p, index) => (
               <li
                 key={p.id}
                 className="flex flex-wrap items-center gap-3 border-t border-navy/10 pt-3 first:border-t-0 first:pt-0"
               >
+                <div className="flex flex-col gap-1">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-7 px-2"
+                    disabled={busy || index === 0}
+                    title="上移"
+                    onClick={() => {
+                      const prizes = state?.prizes ?? [];
+                      if (index <= 0) return;
+                      const ids = prizes.map((x) => x.id);
+                      const tmp = ids[index - 1]!;
+                      ids[index - 1] = ids[index]!;
+                      ids[index] = tmp;
+                      void run(async () => {
+                        await reorderPrizes(token, ids);
+                      }, "奖品顺序已更新");
+                    }}
+                  >
+                    ↑
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-7 px-2"
+                    disabled={busy || index >= (state?.prizes.length ?? 0) - 1}
+                    title="下移"
+                    onClick={() => {
+                      const prizes = state?.prizes ?? [];
+                      if (index >= prizes.length - 1) return;
+                      const ids = prizes.map((x) => x.id);
+                      const tmp = ids[index + 1]!;
+                      ids[index + 1] = ids[index]!;
+                      ids[index] = tmp;
+                      void run(async () => {
+                        await reorderPrizes(token, ids);
+                      }, "奖品顺序已更新");
+                    }}
+                  >
+                    ↓
+                  </Button>
+                </div>
                 {publicImageUrl(p.imagePath) ? (
                   <img
                     src={publicImageUrl(p.imagePath)!}
@@ -486,6 +546,9 @@ export function AdminPage() {
                 )}
                 <div className="min-w-0 flex-1">
                   <div className="font-semibold text-navy">
+                    <span className="mr-1.5 text-xs font-medium text-ink/40">
+                      #{index + 1}
+                    </span>
                     {p.name}{" "}
                     <span className="text-sm font-normal text-ink/50">
                       ×{p.quantity}
