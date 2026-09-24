@@ -289,15 +289,16 @@ export function AdminPage() {
           </Button>
           <Button
             variant="danger"
-            disabled={busy || !!state?.config.sequenceLocked}
-            title={
-              state?.config.sequenceLocked ? "序列已锁定，请先解锁" : undefined
-            }
+            disabled={busy}
             onClick={() => {
-              if (!window.confirm("确定重新开始？已抽记录将清空。")) return;
+              const locked = !!state?.config.sequenceLocked;
+              const msg = locked
+                ? "确定重新开始？已抽记录将清空，号码序列保持锁定不变。"
+                : "确定重新开始？已抽记录将清空，并重新随机生成号码序列。";
+              if (!window.confirm(msg)) return;
               void run(async () => {
                 await restartLottery(token);
-              }, "已重新开始");
+              }, locked ? "已重新开始（序列未变）" : "已重新开始");
             }}
           >
             重新开始
